@@ -3,156 +3,199 @@ package cmd
 import (
 	"fmt"
 	"net"
-	"reflect"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/apparentlymart/go-cidr/cidr"
-	"github.com/miekg/dns"
-	"github.com/pkg/errors"
 
 	"github.com/rs/zerolog/log"
 )
 
-// mode: -auto -wildcard -bruteforce
-// ranges: -auto (from cert sans, local ip range) -manual
-// workers: specify parallelism
-// server: override auto detection of coredns server
-
-// TODO
-// initial dns server reachablility check
-//  ^ type k8s.default... & pull cert
-// automatically
-
-type queryResult struct {
-	dnsRR *dns.RR
-	raw   *dns.Msg
-	ip    *net.IP
-	rtt   *time.Duration
+var srvServices = map[string][]string{
+	"tcp": {
+		"_ceph",
+		"_ceph-mon",
+		"_certificates",
+		"_dns-tcp",
+		"_dns-llq",
+		"_dns-llq-tls",
+		"_dns-push-tls",
+		"_dns-update",
+		"_dns-update-tls",
+		"_ftp",
+		"_grpc",
+		"_http",
+		"_https",
+		"_metrics",
+		"_nfs-domainroot",
+		"_peer-service",
+		"_puppet",
+		"_sip",
+		"_sips",
+		"_ssh",
+		"_tunnel",
+		"_www",
+		"_www-http",
+		"_xmpp",
+		"_xmpp-client",
+		"_xmpp-server",
+		"_x-puppet",
+	},
+	"udp": {
+		"_chat",
+		"_dns",
+		"_dns-sd",
+		"_dns-llq",
+		"_dns-llq-tls",
+		"_dns-update",
+		"_nfs",
+		"_ntp",
+		"_sip",
+		"_sips",
+		"_xmpp-client",
+		"_xmpp-server",
+	},
 }
 
-func brute(subnet *net.IPNet, maxWorkers int, nameserver string) error {
+var ipChan = make(chan net.IP)
+var srvChan = make(chan net.IP)
+var ptrResultChan = make(chan queryResult)
+var svcChan = make(chan svcResult)
+var svcResultChan = make(chan svcResult)
 
-	var server string
+func brute(opts *cliOpts) ([]*svcResult, error) {
 	var err error
-	if nameserver != "" {
-		server = fmt.Sprintf("%s:53", nameserver)
-	} else {
-		server, err = getNSFromSystem()
+	var subnets []*net.IPNet
+
+	if opts.cidrRange == "" {
+		subnets, err = getAPIServerCIDRS()
 		if err != nil {
-			return err
+			return nil, err
 		}
-		log.Info().Msgf("detected nameserver as %s", server)
+		log.Info().Msgf("Guessed %s CIDRs from APIserver cert", subnets)
+	} else {
+		for _, cidr := range strings.Split(opts.cidrRange, ",") {
+			_, subnet, err := net.ParseCIDR(cidr)
+			if err != nil {
+				return nil, err
+			}
+			subnets = append(subnets, subnet)
+		}
 	}
 
-	// check nameserver is a RFC1918 address
-
-	// setup DNS client
-	c := new(dns.Client)
-	dur, _ := time.ParseDuration("0.5s")
-	c.Timeout = dur
-
-	first, last := cidr.AddressRange(subnet)
-	count := cidr.AddressCount(subnet)
-	log.Info().Msgf("scanning range %s to %s, %d hosts", first.String(), last.String(), count)
-	//firstInt, _ := strconv.Atoi(strings.Split(first.String(), ".")[3])
-	//lastInt, _ := strconv.Atoi(strings.Split(last.String(), ".")[3])
-	//for i := firstInt; i < lastInt; i++ {
-
 	// setup scan list
-	ipChan := make(chan net.IP)
 	go func() {
-		for ip := first; !ip.Equal(last); ip = cidr.Inc(ip) {
-			ipChan <- ip
+		for _, net := range subnets {
+			first, last := cidr.AddressRange(net)
+			count := cidr.AddressCount(net)
+			log.Info().Msgf("Scanning range %s to %s, %d hosts", first.String(), last.String(), count)
+			for ip := first; !ip.Equal(last); ip = cidr.Inc(ip) {
+				ipChan <- ip
+			}
 		}
 		close(ipChan)
 	}()
 
+	// parallelise ptr query scanning
 	wg := sync.WaitGroup{}
-	resultChan := make(chan queryResult)
-	for w := 0; w < maxWorkers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for ip := range ipChan {
-				res, err := query(c, ip, server)
-				if err != nil {
-					ipChan <- ip
-				}
-				resultChan <- *res
-			}
-		}()
+	wg.Add(opts.maxWorkers)
+	for w := 0; w < opts.maxWorkers; w++ {
+		go ptrQueryWorker(&wg)
 	}
 
 	go func() {
 		wg.Wait()
-		close(resultChan)
+		close(ptrResultChan)
 	}()
 
-	for res := range resultChan {
-		if res.dnsRR != nil {
-			ans := *res.dnsRR
-			if reflect.TypeOf(*res.dnsRR) == reflect.TypeOf(&dns.PTR{}) {
+	// recv results async
+	go func() {
+		for res := range ptrResultChan {
+			if res.answers != nil {
+				ans := res.answers[0]
 				parts := strings.Split(ans.String(), "\t")
-				fmt.Printf("%s\t%s\n", res.ip, parts[len(parts)-1])
-			} else {
-				fmt.Printf("[unknown]: %s\n", *res.dnsRR)
+				name, ns := parseDNSPodName(parts[len(parts)-1])
+				log.Debug().Msgf("Processing svc: %s\t%s", res.ip, parts[len(parts)-1])
+				svc := svcResult{
+					Name:      name,
+					Namespace: ns,
+					IP:        res.ip,
+				}
+				svcChan <- svc
 			}
 		}
+		close(svcChan)
+	}()
+
+	// parallelise service port bruteforcing
+	wg2 := sync.WaitGroup{}
+	wg2.Add(opts.maxWorkers)
+	for w := 0; w < opts.maxWorkers; w++ {
+		go svcPortScanWorker(&wg2)
 	}
 
-	return nil
-}
+	go func() {
+		wg2.Wait()
+		close(svcResultChan)
+	}()
 
-func getNSFromSystem() (string, error) {
-	conf, err := dns.ClientConfigFromFile("/etc/resolv.conf")
-	if err != nil {
-		return "", errors.Wrap(err, "error making client from resolv.conf")
-	}
-
-	return fmt.Sprintf("%s:%s", conf.Servers[0], conf.Port), nil
-}
-
-func query(c *dns.Client, ip net.IP, server string) (*queryResult, error) {
-
-	m := &dns.Msg{
-		Question: make([]dns.Question, 1),
-		MsgHdr: dns.MsgHdr{
-			RecursionDesired: false,
-		},
-	}
-
-	revip := strings.Join(reverse(strings.Split(ip.String(), ".")), ".")
-	ptr := fmt.Sprintf("%s.in-addr.arpa.", revip)
-	fqdn := dns.Fqdn(ptr)
-
-	log.Debug().Msgf("querying %s, %s", ip.String(), fqdn)
-	m.Question[0] = dns.Question{
-		Name:   fqdn,
-		Qtype:  dns.TypePTR,
-		Qclass: dns.ClassINET,
-	}
-	r, rtt, err := c.Exchange(m, server)
-	if err != nil {
-		var dnsError *net.OpError
-		if errors.As(err, &dnsError) && strings.Contains(err.Error(), "timeout") {
-			return &queryResult{}, nil
-		} else {
-			fmt.Printf("error: %s for %s\n", err, ip)
-			return nil, err
+	var svcs []*svcResult
+	for res := range svcResultChan {
+		// new object needed as objects are clobbered in channel range
+		obj := &svcResult{
+			Name:      res.Name,
+			Namespace: res.Namespace,
+			IP:        res.IP,
+			Ports:     res.Ports,
+			Endpoints: res.Endpoints,
 		}
-	}
-	if r != nil && len(r.Answer) > 0 {
-		return &queryResult{
-			dnsRR: &r.Answer[0],
-			raw:   r,
-			ip:    &ip,
-			rtt:   &rtt,
-		}, nil
+		svcs = append(svcs, obj)
 	}
 
-	return &queryResult{}, nil
+	return svcs, nil
+}
+
+func ptrQueryWorker(wg *sync.WaitGroup) {
+	for ip := range ipChan {
+		res, err := queryPTR(ip)
+		if err != nil {
+			log.Info().Msgf("Retrying failed ip %s: %s", ip, err.Error())
+			ipChan <- ip
+		}
+		ptrResultChan <- *res
+	}
+	wg.Done()
+}
+
+func svcPortScanWorker(wg *sync.WaitGroup) {
+	for svc := range svcChan {
+		for proto, srvSvcList := range srvServices {
+			for _, svcName := range srvSvcList {
+				res, err := querySRV(fmt.Sprintf("%s._%s.%s.%s.svc.%s",
+					svcName,
+					proto,
+					svc.Name,
+					svc.Namespace,
+					opts.zone,
+				))
+				if err != nil {
+					log.Warn().Msgf("SRV request failed %s/%s: %s", svcName, proto, err.Error())
+					svcResultChan <- svc
+				}
+				if res.raw == nil {
+					continue
+				}
+				for _, ans := range res.raw.Answer {
+					_, _, port := parseSRVAnswer(ans.String())
+					addPortToSvc(&svc, proto, port, svcName)
+					log.Debug().Msgf("Found port for svc: %d/%s/%s", port, proto, svcName)
+				}
+			}
+		}
+		svcResultChan <- svc
+	}
+
+	wg.Done()
 }
 
 func reverse(numbers []string) []string {
@@ -161,4 +204,13 @@ func reverse(numbers []string) []string {
 		newNumbers[i], newNumbers[j] = numbers[j], numbers[i]
 	}
 	return newNumbers
+}
+
+func isElement(s []string, str string) bool {
+	for _, v := range s {
+		if v == str {
+			return true
+		}
+	}
+	return false
 }
