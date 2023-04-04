@@ -2,7 +2,7 @@
 
 A tool to enumerate Kubernetes network information through CoreDNS alone. It attempts to list service IPs and ports, and service endpoint IPs where possible.
 
-The tool has two modes: wildcard & bruteforce. It will automagically detect if the version of CoreDNS you are targetting supports wildcards (< v1.9.0) and fallback to the bruteforce method if not. The bruteforce mode also tries to guess the sensible CIDR ranges to scan by default (through parsing the API server HTTPS certicate). You can override this.
+The tool has two modes: wildcard & bruteforce. It will automagically detect if the version of CoreDNS you are targeting supports wildcards (< v1.9.0) and fallback to the bruteforce method if not. The bruteforce mode also tries to guess sensible CIDR ranges to scan by default (through parsing the API server HTTPS certificate). You can override this.
 
 
 ```
