@@ -186,7 +186,12 @@ func svcPortScanWorker(wg *sync.WaitGroup) {
 					continue
 				}
 				for _, ans := range res.raw.Answer {
-					_, _, port := parseSRVAnswer(ans.String())
+					_, _, port, err := parseSRVAnswer(ans.String())
+					if err != nil {
+						log.Warn().Err(err)
+						continue
+					}
+
 					addPortToSvc(&svc, proto, port, svcName)
 					log.Debug().Msgf("Found port for svc: %d/%s/%s", port, proto, svcName)
 				}

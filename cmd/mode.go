@@ -47,8 +47,6 @@ func wildcardK8sAddress() (bool, error) {
 }
 
 func getAPIServerCIDRS() ([]*net.IPNet, error) {
-	var cidrs []*net.IPNet
-
 	if ok, err := queryDefaultK8sAddress(); !ok || err != nil {
 		return nil, fmt.Errorf("couldnt query default apiserver")
 	}
@@ -58,8 +56,7 @@ func getAPIServerCIDRS() ([]*net.IPNet, error) {
 	}
 	conn, err := tls.Dial("tcp", fmt.Sprintf("kubernetes.default.svc.%s:443", opts.zone), conf)
 	if err != nil {
-		log.Err(err).Msg("Error in Dial")
-		return cidrs, nil
+		return nil, fmt.Errorf("Error in connecting to API server")
 	}
 	defer conn.Close()
 
@@ -67,11 +64,12 @@ func getAPIServerCIDRS() ([]*net.IPNet, error) {
 	cert := certs[0]
 
 	if cert.Issuer.CommonName != "kubernetes" {
-		return cidrs, fmt.Errorf("problem getting apiserver cert")
+		return nil, fmt.Errorf("problem getting apiserver cert")
 	}
 
 	// look at kubernetes.default and kube-dns.kube-system to determine pod/node networks
 
+	var cidrs []*net.IPNet
 	for _, ip := range cert.IPAddresses {
 		cidrs = append(cidrs, &net.IPNet{
 			IP: ip,

@@ -20,7 +20,11 @@ func wildcard(opts *cliOpts) ([]*svcResult, error) {
 		}
 
 		for _, rr := range res.raw.Extra {
-			name, ns, ip := parseAAnswer(rr.String())
+			name, ns, ip, err := parseAAnswer(rr.String())
+			if err != nil {
+				return nil, err
+			}
+
 			svc := &svcResult{
 				Name:      name,
 				Namespace: ns,
@@ -29,7 +33,11 @@ func wildcard(opts *cliOpts) ([]*svcResult, error) {
 			svcs, _ = addUniqueSvcToSvcs(svcs, svc)
 		}
 		for _, rr := range res.answers {
-			name, ns, port := parseSRVAnswer(rr.String())
+			name, ns, port, err := parseSRVAnswer(rr.String())
+			if err != nil {
+				return nil, err
+			}
+
 			addPortToSvcs(svcs, name, ns, proto, port, "")
 		}
 	}
@@ -38,11 +46,16 @@ func wildcard(opts *cliOpts) ([]*svcResult, error) {
 	for _, svc := range svcs {
 		res, err := queryA(fmt.Sprintf("any.%s.%s.svc.%s", svc.Name, svc.Namespace, opts.zone))
 		if err != nil {
-			return nil, err
+			log.Warn().Err(err)
+			continue
 		}
 
 		for _, rr := range res.raw.Answer {
-			_, _, ip := parseAAnswer(rr.String())
+			_, _, ip, err := parseAAnswer(rr.String())
+			if err != nil {
+				log.Warn().Err(err)
+				continue
+			}
 			endp := &podResult{
 				Name:      svc.Name,
 				Namespace: svc.Namespace,
@@ -58,7 +71,7 @@ func wildcard(opts *cliOpts) ([]*svcResult, error) {
 func addUniqueSvcToSvcs(svcs []*svcResult, svc *svcResult) ([]*svcResult, error) {
 	for _, s := range svcs {
 		if s.Name == svc.Name && s.Namespace == svc.Namespace && s.IP.String() == svc.IP.String() {
-			log.Debug().Msgf("svc %s/%s already registerd", svc.Namespace, svc.Name)
+			log.Debug().Msgf("svc %s/%s already registered", svc.Namespace, svc.Name)
 			return svcs, nil
 		}
 	}

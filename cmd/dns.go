@@ -28,14 +28,18 @@ func initDNS() {
 func getNSFromSystem() (string, int, error) {
 	conf, err := dns.ClientConfigFromFile("/etc/resolv.conf")
 	if err != nil {
-		return "", 0, errors.Wrap(err, "error making client from resolv.conf")
+		return "", 0, fmt.Errorf("Error making client from resolv.conf: %w", err)
 	}
 
 	if !isElement(conf.Search, fmt.Sprintf("svc.%s", opts.zone)) {
 		log.Warn().Msgf("Unabled to validate k8s zone (%s)", opts.zone)
 	}
 
-	port, _ := strconv.Atoi(conf.Port)
+	port, err := strconv.Atoi(conf.Port)
+	if err != nil {
+		return "", 0, fmt.Errorf("Error converting port to int: %s", conf.Port)
+	}
+
 	return conf.Servers[0], port, nil
 }
 
@@ -125,19 +129,34 @@ func queryRecord(client *dns.Client, m *dns.Msg) (*queryResult, error) {
 	return &queryResult{}, nil
 }
 
-func parseSRVAnswer(ans string) (string, string, int) {
+func parseSRVAnswer(ans string) (string, string, int, error) {
 	parts := strings.Split(ans, "\t")
+	if len(parts) != 5 {
+		return "", "", 0, fmt.Errorf("Error parsing SRV: %s", ans)
+	}
 	parts4 := strings.Split(parts[4], " ")
-	port, _ := strconv.Atoi(parts4[2])
+	if len(parts4) != 4 {
+		return "", "", 0, fmt.Errorf("Error parsing SRV: %s", parts4)
+	}
+	port, err := strconv.Atoi(parts4[2])
+	if err != nil {
+		return "", "", 0, err
+	}
 	name, ns := parseDNSPodName(parts4[3])
-	return name, ns, port
+	return name, ns, port, nil
 }
 
-func parseAAnswer(ans string) (string, string, net.IP) {
+func parseAAnswer(ans string) (string, string, net.IP, error) {
 	parts := strings.Split(ans, "\t")
+	if len(parts) != 5 {
+		return "", "", nil, fmt.Errorf("Error parsing A: %s", ans)
+	}
 	name, ns := parseDNSPodName(parts[0])
 	ip := net.ParseIP(parts[4])
-	return name, ns, ip
+	if ip == nil {
+		return "", "", nil, fmt.Errorf("Error parsing IP address: %s", parts[4])
+	}
+	return name, ns, ip, nil
 }
 
 func parseDNSPodName(fqdn string) (string, string) {
