@@ -19,6 +19,10 @@ func wildcard(opts *cliOpts) ([]*svcResult, error) {
 			return nil, err
 		}
 
+		if len(res.raw.Extra) == 0 {
+			log.Debug().Msgf("No svcs for proto %s found", proto)
+			continue
+		}
 		for _, rr := range res.raw.Extra {
 			name, ns, ip, err := parseAAnswer(rr.String())
 			if err != nil {
@@ -32,12 +36,16 @@ func wildcard(opts *cliOpts) ([]*svcResult, error) {
 			}
 			svcs, _ = addUniqueSvcToSvcs(svcs, svc)
 		}
+
+		if len(res.answers) == 0 {
+			log.Debug().Msgf("No named ports for %s svcs found", proto)
+			continue
+		}
 		for _, rr := range res.answers {
 			name, ns, port, err := parseSRVAnswer(rr.String())
 			if err != nil {
 				return nil, err
 			}
-
 			addPortToSvcs(svcs, name, ns, proto, port, "")
 		}
 	}
@@ -50,7 +58,11 @@ func wildcard(opts *cliOpts) ([]*svcResult, error) {
 			continue
 		}
 
-		for _, rr := range res.raw.Answer {
+		if len(res.answers) == 0 {
+			log.Debug().Msgf("svc %s/%s has no registered endpoints", svc.Namespace, svc.Name)
+			continue
+		}
+		for _, rr := range res.answers {
 			_, _, ip, err := parseAAnswer(rr.String())
 			if err != nil {
 				log.Warn().Err(err)
