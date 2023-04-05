@@ -6,6 +6,8 @@ builds:
   - id: coredns-enum
     env:
       - CGO_ENABLED=0
+    ldflags:
+      - "-s -w -extldflags='-static'"
     goos:
       - linux
       - darwin
