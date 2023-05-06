@@ -113,6 +113,23 @@ func querySRV(aname string) (*queryResult, error) {
 	return multiProtoQueryRecord(m)
 }
 
+func queryTXT(txt string) (*queryResult, error) {
+	m := &dns.Msg{
+		Question: make([]dns.Question, 1),
+		MsgHdr: dns.MsgHdr{
+			RecursionDesired: false,
+		},
+	}
+
+	log.Trace().Msgf("querying TXT record for %s", txt)
+	m.Question[0] = dns.Question{
+		Name:   dns.Fqdn(txt),
+		Qtype:  dns.TypeTXT,
+		Qclass: dns.ClassINET,
+	}
+	return multiProtoQueryRecord(m)
+}
+
 func multiProtoQueryRecord(m *dns.Msg) (*queryResult, error) {
 	switch opts.proto {
 	case "auto":
@@ -150,7 +167,7 @@ func queryRecord(client *dns.Client, m *dns.Msg) (*queryResult, error) {
 	if err != nil {
 		var dnsError *net.OpError
 		if errors.As(err, &dnsError) && strings.Contains(err.Error(), "timeout") {
-			return &queryResult{}, nil
+			return nil, nil
 		}
 		return nil, err
 	}

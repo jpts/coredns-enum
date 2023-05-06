@@ -16,6 +16,11 @@ const (
 )
 
 func detectMode() string {
+	if ok, _ := checkSpecVersion(); !ok {
+		log.Info().Msg("Unable to detect spec compliant Kubernetes DNS server")
+		return MODE_FAILED
+	}
+
 	if ok, _ := wildcardK8sAddress(); ok {
 		log.Info().Msg("Wildcard support detected")
 		return MODE_WILDCARD
@@ -26,6 +31,15 @@ func detectMode() string {
 	}
 	log.Error().Msg("Failed to detect a CoreDNS server")
 	return MODE_FAILED
+}
+
+func checkSpecVersion() (bool, error) {
+	res, err := queryTXT(fmt.Sprintf("dns-version.%s", opts.zone))
+	if err != nil {
+		return false, err
+	}
+
+	return res != nil, nil
 }
 
 func queryDefaultK8sAddress() (bool, error) {
