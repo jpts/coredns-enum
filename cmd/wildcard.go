@@ -19,7 +19,7 @@ func wildcard(opts *cliOpts) ([]*svcResult, error) {
 			return nil, err
 		}
 
-		if len(res.additional) == 0 {
+		if res == nil || res.additional == nil {
 			log.Debug().Msgf("No svcs for proto %s found", proto)
 			continue
 		}
@@ -37,7 +37,7 @@ func wildcard(opts *cliOpts) ([]*svcResult, error) {
 			svcs, _ = addUniqueSvcToSvcs(svcs, svc)
 		}
 
-		if len(res.answers) == 0 {
+		if res.answers == nil {
 			log.Debug().Msgf("No named ports for %s svcs found", proto)
 			continue
 		}
@@ -58,7 +58,7 @@ func wildcard(opts *cliOpts) ([]*svcResult, error) {
 			continue
 		}
 
-		if len(res.answers) == 0 {
+		if res == nil || res.answers == nil {
 			log.Debug().Msgf("svc %s/%s has no registered endpoints", svc.Namespace, svc.Name)
 			continue
 		}
