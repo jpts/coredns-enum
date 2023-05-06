@@ -34,7 +34,7 @@ func queryDefaultK8sAddress() (bool, error) {
 		return false, err
 	}
 
-	return res.raw != nil, nil
+	return res != nil, nil
 }
 
 func wildcardK8sAddress() (bool, error) {
@@ -43,7 +43,7 @@ func wildcardK8sAddress() (bool, error) {
 		return false, err
 	}
 
-	return res.raw != nil, nil
+	return res != nil, nil
 }
 
 func getAPIServerCIDRS() ([]*net.IPNet, error) {

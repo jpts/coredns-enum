@@ -12,10 +12,11 @@ import (
 )
 
 type queryResult struct {
-	answers []dns.RR
-	raw     *dns.Msg
-	ip      *net.IP
-	rtt     *time.Duration
+	answers    []dns.RR
+	additional []dns.RR
+	raw        *dns.Msg
+	ip         *net.IP
+	rtt        *time.Duration
 }
 
 type svcResult struct {

@@ -20,6 +20,7 @@ type cliOpts struct {
 	timeout    float32
 	mode       string
 	zone       string
+	proto      string
 }
 
 var opts cliOpts
@@ -38,6 +39,10 @@ var rootCmd = &cobra.Command{
 			return errors.New("Error setting up logging")
 		}
 		zerolog.SetGlobalLevel(lvl)
+
+		if opts.proto != "udp" && opts.proto != "tcp" && opts.proto != "auto" {
+			log.Error().Msg("Invalid protocol")
+		}
 
 		initDNS()
 
@@ -91,10 +96,11 @@ func init() {
 
 	// bruteforce
 	rootCmd.Flags().IntVarP(&opts.maxWorkers, "max-workers", "t", 50, "Number of 'workers' to use for concurrency")
-        rootCmd.Flags().StringVar(&opts.cidrRange, "cidr", "", "Range to scan in bruteforce mode")
+	rootCmd.Flags().StringVar(&opts.cidrRange, "cidr", "", "Range to scan in bruteforce mode")
 
 	// nameserver
 	rootCmd.Flags().StringVarP(&opts.nameserver, "nsip", "n", "", "Nameserver to use (detected by default)")
 	rootCmd.Flags().IntVar(&opts.nameport, "nsport", 53, "Nameserver port to use (detected by default)")
 	rootCmd.Flags().Float32Var(&opts.timeout, "timeout", 0.5, "DNS query timeout (seconds)")
+	rootCmd.Flags().StringVar(&opts.proto, "protocol", "auto", "DNS protocol: udp|tcp|auto")
 }

@@ -23,7 +23,7 @@ func wildcard(opts *cliOpts) ([]*svcResult, error) {
 			log.Debug().Msgf("No svcs for proto %s found", proto)
 			continue
 		}
-		for _, rr := range res.raw.Extra {
+		for _, rr := range res.additional {
 			name, ns, ip, err := parseAAnswer(rr.String())
 			if err != nil {
 				return nil, err

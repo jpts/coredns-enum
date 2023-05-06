@@ -162,6 +162,9 @@ func ptrQueryWorker(wg *sync.WaitGroup) {
 			log.Info().Msgf("Retrying failed ip %s: %s", ip, err.Error())
 			ipChan <- ip
 		}
+		if res == nil {
+			continue
+		}
 		ptrResultChan <- *res
 	}
 	wg.Done()
@@ -182,10 +185,10 @@ func svcPortScanWorker(wg *sync.WaitGroup) {
 					log.Warn().Msgf("SRV request failed %s/%s: %s", svcName, proto, err.Error())
 					svcResultChan <- svc
 				}
-				if res.raw == nil {
+				if res == nil {
 					continue
 				}
-				for _, ans := range res.raw.Answer {
+				for _, ans := range res.answers {
 					_, _, port, err := parseSRVAnswer(ans.String())
 					if err != nil {
 						log.Warn().Err(err)

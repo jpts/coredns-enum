@@ -12,7 +12,7 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-var clientUDP = &dns.Client{}
+var clientUDP = &dns.Client{Net: "udp"}
 var clientTCP = &dns.Client{Net: "tcp"}
 
 func initDNS() {
@@ -62,16 +62,20 @@ func queryPTR(ip net.IP) (*queryResult, error) {
 		Qtype:  dns.TypePTR,
 		Qclass: dns.ClassINET,
 	}
-	res, err := queryRecord(clientUDP, m)
+	res, err := multiProtoQueryRecord(m)
 	if err != nil {
-		return &queryResult{}, err
+		return nil, err
+	}
+	if res == nil {
+		return nil, nil
 	}
 
 	return &queryResult{
-		answers: res.answers,
-		raw:     res.raw,
-		ip:      &ip,
-		rtt:     res.rtt,
+		answers:    res.answers,
+		additional: res.additional,
+		raw:        res.raw,
+		ip:         &ip,
+		rtt:        res.rtt,
 	}, nil
 }
 
@@ -89,7 +93,7 @@ func queryA(aname string) (*queryResult, error) {
 		Qtype:  dns.TypeA,
 		Qclass: dns.ClassINET,
 	}
-	return queryRecord(clientUDP, m)
+	return multiProtoQueryRecord(m)
 }
 
 func querySRV(aname string) (*queryResult, error) {
@@ -106,6 +110,38 @@ func querySRV(aname string) (*queryResult, error) {
 		Qtype:  dns.TypeSRV,
 		Qclass: dns.ClassINET,
 	}
+	return multiProtoQueryRecord(m)
+}
+
+func multiProtoQueryRecord(m *dns.Msg) (*queryResult, error) {
+	switch opts.proto {
+	case "auto":
+		return autoProtoQueryRecord(m)
+	case "udp":
+		return queryRecord(clientUDP, m)
+	case "tcp":
+		return queryRecord(clientTCP, m)
+	default:
+		return nil, fmt.Errorf("Unknown protocol %s", opts.proto)
+	}
+}
+
+func autoProtoQueryRecord(m *dns.Msg) (*queryResult, error) {
+	res, err := queryRecord(clientUDP, m)
+	if err != nil {
+		return nil, err
+	}
+
+	if res == nil {
+		return nil, nil
+	}
+
+	if !res.raw.Truncated {
+		return res, nil
+	}
+
+	log.Debug().Msgf("Got truncated response for %s, retrying with TCP", m.Question[0].Name)
+
 	return queryRecord(clientTCP, m)
 }
 
@@ -118,15 +154,16 @@ func queryRecord(client *dns.Client, m *dns.Msg) (*queryResult, error) {
 		}
 		return nil, err
 	}
+
 	if r != nil && len(r.Answer) > 0 {
 		return &queryResult{
-			answers: r.Answer,
-			raw:     r,
-			rtt:     &rtt,
+			answers:    r.Answer,
+			additional: r.Extra,
+			raw:        r,
+			rtt:        &rtt,
 		}, nil
 	}
-
-	return &queryResult{}, nil
+	return nil, nil
 }
 
 func parseSRVAnswer(ans string) (string, string, int, error) {
