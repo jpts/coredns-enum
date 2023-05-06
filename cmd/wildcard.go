@@ -19,7 +19,7 @@ func wildcard(opts *cliOpts) ([]*svcResult, error) {
 			return nil, err
 		}
 
-		if len(res.raw.Extra) == 0 {
+		if len(res.additional) == 0 {
 			log.Debug().Msgf("No svcs for proto %s found", proto)
 			continue
 		}
