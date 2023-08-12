@@ -1,6 +1,6 @@
 package main
 
-import "github/jpts/coredns-enum/cmd"
+import "github.com/jpts/coredns-enum/cmd"
 
 func main() {
 	cmd.Execute()

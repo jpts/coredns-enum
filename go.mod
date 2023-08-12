@@ -1,4 +1,4 @@
-module github/jpts/coredns-enum
+module github.com/jpts/coredns-enum
 
 go 1.18
 
