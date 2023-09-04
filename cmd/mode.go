@@ -85,11 +85,12 @@ func getAPIServerCIDRS() ([]*net.IPNet, error) {
 
 	var cidrs []*net.IPNet
 	for _, ip := range cert.IPAddresses {
-		cidrs = append(cidrs, &net.IPNet{
-			IP: ip,
-			// Take a best guess here
-			Mask: net.IPv4Mask(255, 255, 252, 0),
-		})
+		// Guess subnet size
+		_, net, err := net.ParseCIDR(fmt.Sprintf("%s/22", ip.String()))
+		if err != nil {
+			return nil, fmt.Errorf("problem parsing apiserver cert IPs: %s", ip)
+		}
+		cidrs = append(cidrs, net)
 	}
 
 	return cidrs, nil
