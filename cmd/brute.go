@@ -64,11 +64,14 @@ var svcChan = make(chan svcResult)
 var svcResultChan = make(chan svcResult)
 
 func brute(opts *cliOpts) ([]*svcResult, error) {
-	var err error
 	var subnets []*net.IPNet
 
 	if opts.cidrRange == "" {
-		subnets, err = getAPIServerCIDRS()
+		cert, err := getDefaultAPIServerCert()
+		if err != nil {
+			return nil, err
+		}
+		subnets, err = GetAPIServerCIDRS(cert)
 		if err != nil {
 			return nil, err
 		}

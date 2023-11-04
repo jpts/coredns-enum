@@ -2,10 +2,12 @@ package cmd
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
 
 	"github.com/rs/zerolog/log"
+	"github.com/seancfoley/ipaddress-go/ipaddr"
 )
 
 const (
@@ -60,7 +62,7 @@ func wildcardK8sAddress() (bool, error) {
 	return res != nil, nil
 }
 
-func getAPIServerCIDRS() ([]*net.IPNet, error) {
+func getDefaultAPIServerCert() (*x509.Certificate, error) {
 	if ok, err := queryDefaultK8sAddress(); !ok || err != nil {
 		return nil, fmt.Errorf("couldnt query default apiserver")
 	}
@@ -75,6 +77,7 @@ func getAPIServerCIDRS() ([]*net.IPNet, error) {
 	defer conn.Close()
 
 	certs := conn.ConnectionState().PeerCertificates
+	// assume one
 	cert := certs[0]
 
 	if cert.Issuer.CommonName != "kubernetes" {
@@ -82,7 +85,39 @@ func getAPIServerCIDRS() ([]*net.IPNet, error) {
 	}
 
 	// look at kubernetes.default and kube-dns.kube-system to determine pod/node networks
+	return cert, nil
+}
 
+func isPrivateAddress(netip *net.IPNet) bool {
+	// RFC6598 CGN Shared IP Range
+	SHARED_CIDR_RANGES := []*ipaddr.IPAddressString{
+		ipaddr.NewIPAddressString("100.64.0.0/10"),
+	}
+	// RFC3330,RFC2544 Test Nets
+	TEST_CIDR_RANGES := []*ipaddr.IPAddressString{
+		ipaddr.NewIPAddressString("192.0.2.0/24"),
+		ipaddr.NewIPAddressString("198.18.0.0/15"),
+		ipaddr.NewIPAddressString("198.51.100.0/24"),
+		ipaddr.NewIPAddressString("203.0.113.0/24"),
+	}
+
+	addr, _ := ipaddr.NewIPAddressFromNetIP(netip.IP)
+
+	if addr.ToIPv4().IsPrivate() {
+		return true
+	}
+
+	for _, cidrstr := range append(SHARED_CIDR_RANGES, TEST_CIDR_RANGES...) {
+		cidr := cidrstr.GetAddress()
+		if cidr.Contains(addr) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func GetAPIServerCIDRS(cert *x509.Certificate) ([]*net.IPNet, error) {
 	var cidrs []*net.IPNet
 	for _, ip := range cert.IPAddresses {
 		// Guess subnet size
@@ -90,6 +125,12 @@ func getAPIServerCIDRS() ([]*net.IPNet, error) {
 		if err != nil {
 			return nil, fmt.Errorf("problem parsing apiserver cert IPs: %s", ip)
 		}
+
+		if !isPrivateAddress(net) {
+			log.Debug().Msgf("CIDR %s not private, removing from guesses", net)
+			continue
+		}
+
 		cidrs = append(cidrs, net)
 	}
 
