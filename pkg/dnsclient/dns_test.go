@@ -1,4 +1,4 @@
-package cmd
+package dnsclient
 
 import (
 	"net"
@@ -31,7 +31,7 @@ func TestParseAAnswer(t *testing.T) {
 		in := tcase["in"].(string)
 		out := tcase["out"].(map[string]any)
 
-		name, ns, ip, err := parseAAnswer(in)
+		name, ns, ip, err := ParseAAnswer(in)
 
 		assert.Equal(t, out["name"], name)
 		assert.Equal(t, out["ns"], ns)
@@ -64,7 +64,7 @@ func TestParseSRVAnswer(t *testing.T) {
 		in := tcase["in"].(string)
 		out := tcase["out"].(map[string]any)
 
-		name, ns, port, err := parseSRVAnswer(in)
+		name, ns, port, err := ParseSRVAnswer(in)
 
 		assert.Equal(t, out["name"], name)
 		assert.Equal(t, out["ns"], ns)

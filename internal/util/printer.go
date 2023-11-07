@@ -1,63 +1,15 @@
-package cmd
+package util
 
 import (
 	"fmt"
-	"net"
 	"os"
 	"sort"
-	"time"
 
-	"github.com/miekg/dns"
+	"github.com/jpts/coredns-enum/internal/types"
 	"github.com/olekukonko/tablewriter"
 )
 
-type queryResult struct {
-	answers    []dns.RR
-	additional []dns.RR
-	raw        *dns.Msg
-	ip         *net.IP
-	rtt        *time.Duration
-}
-
-type svcResult struct {
-	Name      string
-	Namespace string
-	IP        *net.IP
-	Ports     []*portResult
-	Endpoints []*podResult
-}
-
-func (s *svcResult) String() string { return fmt.Sprintf("%s/%s", s.Namespace, s.Name) }
-
-type podResult struct {
-	Name      string
-	Namespace string
-	IP        *net.IP
-	Ports     []*portResult
-}
-
-type portResult struct {
-	Proto    string
-	PortNo   int
-	PortName string
-}
-
-func (p *portResult) String() string { return fmt.Sprintf("%d/%s", p.PortNo, p.Proto) }
-
-type SortByNsName []*svcResult
-
-func (a SortByNsName) Len() int { return len(a) }
-
-func (a SortByNsName) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
-
-func (a SortByNsName) Less(i, j int) bool {
-	if a[i].Namespace == a[j].Namespace {
-		return a[i].Name < a[j].Name
-	}
-	return a[i].Namespace < a[j].Namespace
-}
-
-func renderResults(res []*svcResult) {
+func RenderResults(res []*types.SvcResult) {
 	var output [][]string
 
 	sort.Sort(SortByNsName(res))

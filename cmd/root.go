@@ -6,24 +6,16 @@ import (
 	"os"
 
 	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 
-	"github.com/rs/zerolog/log"
+	"github.com/jpts/coredns-enum/internal/types"
+	"github.com/jpts/coredns-enum/internal/util"
+	"github.com/jpts/coredns-enum/pkg/dnsclient"
+	"github.com/jpts/coredns-enum/pkg/scanners"
 )
 
-type cliOpts struct {
-	loglevel   int
-	maxWorkers int
-	cidrRange  string
-	nameserver string
-	nameport   int
-	timeout    float32
-	mode       string
-	zone       string
-	proto      string
-}
-
-var opts cliOpts
+var opts types.CliOpts
 
 var rootCmd = &cobra.Command{
 	Use:   "coredns-enum",
@@ -34,46 +26,46 @@ var rootCmd = &cobra.Command{
 		var err error
 
 		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
-		lvl, err := zerolog.ParseLevel(fmt.Sprint(opts.loglevel))
+		lvl, err := zerolog.ParseLevel(fmt.Sprint(opts.LogLevel))
 		if err != nil {
 			return errors.New("Error setting up logging")
 		}
 		zerolog.SetGlobalLevel(lvl)
 
-		if opts.proto != "udp" && opts.proto != "tcp" && opts.proto != "auto" {
+		if opts.Proto != "udp" && opts.Proto != "tcp" && opts.Proto != "auto" {
 			log.Error().Msg("Invalid protocol")
 		}
 
-		initDNS()
+		dclient := dnsclient.InitDNS(&opts)
 
-		if opts.nameserver == "" {
-			opts.nameserver, opts.nameport, err = getNSFromSystem()
+		if opts.Nameserver == "" {
+			opts.Nameserver, opts.Nameport, err = dclient.GetNSFromSystem()
 			if err != nil {
 				return err
 			}
-			log.Info().Msgf("Detected nameserver as %s:%d", opts.nameserver, opts.nameport)
+			log.Info().Msgf("Detected nameserver as %s:%d", opts.Nameserver, opts.Nameport)
 		}
 
-		if opts.mode == MODE_AUTO {
-			opts.mode = detectMode()
+		if opts.Mode == dnsclient.MODE_AUTO {
+			opts.Mode = dclient.DetectMode()
 		}
 
-		var res []*svcResult
-		switch opts.mode {
-		case MODE_BRUTEFORCE:
-			res, err = brute(&opts)
-		case MODE_WILDCARD:
-			res, err = wildcard(&opts)
-		case MODE_FAILED:
+		var res []*types.SvcResult
+		switch opts.Mode {
+		case dnsclient.MODE_BRUTEFORCE:
+			res, err = scanners.BruteScan(&opts, dclient)
+		case dnsclient.MODE_WILDCARD:
+			res, err = scanners.WildcardScan(&opts, dclient)
+		case dnsclient.MODE_FAILED:
 			err = fmt.Errorf("Failed to detect mode automatically")
 		default:
-			err = fmt.Errorf("Unsupported mode: %s", opts.mode)
+			err = fmt.Errorf("Unsupported mode: %s", opts.Mode)
 		}
 		if err != nil {
 			return err
 		}
 
-		renderResults(res)
+		util.RenderResults(res)
 
 		return nil
 	},
@@ -90,17 +82,17 @@ func Execute() {
 
 func init() {
 	// global flags
-	rootCmd.PersistentFlags().IntVarP(&opts.loglevel, "loglevel", "v", 1, "Set loglevel (-1 => 5)")
-	rootCmd.PersistentFlags().StringVarP(&opts.mode, "mode", "m", "auto", "Select mode: wildcard|bruteforce|auto")
-	rootCmd.PersistentFlags().StringVar(&opts.zone, "zone", "cluster.local", "DNS zone")
+	rootCmd.PersistentFlags().IntVarP(&opts.LogLevel, "loglevel", "v", 1, "Set loglevel (-1 => 5)")
+	rootCmd.PersistentFlags().StringVarP(&opts.Mode, "mode", "m", "auto", "Select mode: wildcard|bruteforce|auto")
+	rootCmd.PersistentFlags().StringVar(&opts.Zone, "zone", "cluster.local", "DNS zone")
 
 	// bruteforce
-	rootCmd.Flags().IntVarP(&opts.maxWorkers, "max-workers", "t", 50, "Number of 'workers' to use for concurrency")
-	rootCmd.Flags().StringVar(&opts.cidrRange, "cidr", "", "Range to scan in bruteforce mode")
+	rootCmd.Flags().IntVarP(&opts.MaxWorkers, "max-workers", "t", 50, "Number of 'workers' to use for concurrency")
+	rootCmd.Flags().StringVar(&opts.CidrRange, "cidr", "", "Range to scan in bruteforce mode")
 
 	// nameserver
-	rootCmd.Flags().StringVarP(&opts.nameserver, "nsip", "n", "", "Nameserver to use (detected by default)")
-	rootCmd.Flags().IntVar(&opts.nameport, "nsport", 53, "Nameserver port to use (detected by default)")
-	rootCmd.Flags().Float32Var(&opts.timeout, "timeout", 0.5, "DNS query timeout (seconds)")
-	rootCmd.Flags().StringVar(&opts.proto, "protocol", "auto", "DNS protocol: udp|tcp|auto")
+	rootCmd.Flags().StringVarP(&opts.Nameserver, "nsip", "n", "", "Nameserver to use (detected by default)")
+	rootCmd.Flags().IntVar(&opts.Nameport, "nsport", 53, "Nameserver port to use (detected by default)")
+	rootCmd.Flags().Float32Var(&opts.Timeout, "timeout", 0.5, "DNS query timeout (seconds)")
+	rootCmd.Flags().StringVar(&opts.Proto, "protocol", "auto", "DNS protocol: udp|tcp|auto")
 }

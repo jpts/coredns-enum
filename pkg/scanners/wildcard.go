@@ -1,35 +1,37 @@
-package cmd
+package scanners
 
 import (
 	"fmt"
 	"strings"
 
+	"github.com/jpts/coredns-enum/internal/types"
+	"github.com/jpts/coredns-enum/pkg/dnsclient"
 	"github.com/rs/zerolog/log"
 )
 
-// https://github.com/coredns/coredns.io/blob/1.8.4/content/plugins/kubernetes.md#wildcards
+// https://github.com/coredns/corednsclient.io/blob/1.8.4/content/plugins/kubernetes.md#wildcards
 
-func wildcard(opts *cliOpts) ([]*svcResult, error) {
-	var svcs []*svcResult
+func WildcardScan(opts *types.CliOpts, dclient *dnsclient.DNSClient) ([]*types.SvcResult, error) {
+	var svcs []*types.SvcResult
 
 	// port/proto - gives us namespaces
 	for _, proto := range []string{"tcp", "udp"} {
-		res, err := querySRV(fmt.Sprintf("any._%s.any.any.svc.%s", proto, opts.zone))
+		res, err := dclient.QuerySRV(fmt.Sprintf("any._%s.any.any.svc.%s", proto, opts.Zone))
 		if err != nil {
 			return nil, err
 		}
 
-		if res == nil || res.additional == nil {
+		if res == nil || res.Additional == nil {
 			log.Debug().Msgf("No svcs for proto %s found", proto)
 			continue
 		}
-		for _, rr := range res.additional {
-			name, ns, ip, err := parseAAnswer(rr.String())
+		for _, rr := range res.Additional {
+			name, ns, ip, err := dnsclient.ParseAAnswer(rr.String())
 			if err != nil {
 				return nil, err
 			}
 
-			svc := &svcResult{
+			svc := &types.SvcResult{
 				Name:      name,
 				Namespace: ns,
 				IP:        &ip,
@@ -37,12 +39,12 @@ func wildcard(opts *cliOpts) ([]*svcResult, error) {
 			svcs, _ = addUniqueSvcToSvcs(svcs, svc)
 		}
 
-		if res.answers == nil {
+		if res.Answers == nil {
 			log.Debug().Msgf("No named ports for %s svcs found", proto)
 			continue
 		}
-		for _, rr := range res.answers {
-			name, ns, port, err := parseSRVAnswer(rr.String())
+		for _, rr := range res.Answers {
+			name, ns, port, err := dnsclient.ParseSRVAnswer(rr.String())
 			if err != nil {
 				return nil, err
 			}
@@ -52,23 +54,23 @@ func wildcard(opts *cliOpts) ([]*svcResult, error) {
 
 	// endpoints
 	for _, svc := range svcs {
-		res, err := queryA(fmt.Sprintf("any.%s.%s.svc.%s", svc.Name, svc.Namespace, opts.zone))
+		res, err := dclient.QueryA(fmt.Sprintf("any.%s.%s.svc.%s", svc.Name, svc.Namespace, opts.Zone))
 		if err != nil {
 			log.Warn().Err(err)
 			continue
 		}
 
-		if res == nil || res.answers == nil {
+		if res == nil || res.Answers == nil {
 			log.Debug().Msgf("svc %s/%s has no registered endpoints", svc.Namespace, svc.Name)
 			continue
 		}
-		for _, rr := range res.answers {
-			_, _, ip, err := parseAAnswer(rr.String())
+		for _, rr := range res.Answers {
+			_, _, ip, err := dnsclient.ParseAAnswer(rr.String())
 			if err != nil {
 				log.Warn().Err(err)
 				continue
 			}
-			endp := &podResult{
+			endp := &types.PodResult{
 				Name:      svc.Name,
 				Namespace: svc.Namespace,
 				IP:        &ip,
@@ -80,7 +82,7 @@ func wildcard(opts *cliOpts) ([]*svcResult, error) {
 	return svcs, nil
 }
 
-func addUniqueSvcToSvcs(svcs []*svcResult, svc *svcResult) ([]*svcResult, error) {
+func addUniqueSvcToSvcs(svcs []*types.SvcResult, svc *types.SvcResult) ([]*types.SvcResult, error) {
 	for _, s := range svcs {
 		if s.Name == svc.Name && s.Namespace == svc.Namespace && s.IP.String() == svc.IP.String() {
 			log.Debug().Msgf("svc %s/%s already registered", svc.Namespace, svc.Name)
@@ -91,7 +93,7 @@ func addUniqueSvcToSvcs(svcs []*svcResult, svc *svcResult) ([]*svcResult, error)
 	return append(svcs, svc), nil
 }
 
-func addPortToSvcs(svcs []*svcResult, podName string, ns string, proto string, port int, portName string) error {
+func addPortToSvcs(svcs []*types.SvcResult, podName string, ns string, proto string, port int, portName string) error {
 	for _, s := range svcs {
 		if s.Name == podName && s.Namespace == ns {
 			return addPortToSvc(s, proto, port, portName)
@@ -101,8 +103,8 @@ func addPortToSvcs(svcs []*svcResult, podName string, ns string, proto string, p
 	return nil
 }
 
-func addPortToSvc(svc *svcResult, proto string, port int, portName string) error {
-	p := &portResult{
+func addPortToSvc(svc *types.SvcResult, proto string, port int, portName string) error {
+	p := &types.PortResult{
 		Proto:    strings.TrimPrefix(proto, "_"),
 		PortNo:   port,
 		PortName: strings.TrimPrefix(portName, "_"),

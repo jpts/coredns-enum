@@ -1,4 +1,4 @@
-package cmd
+package scanners
 
 import (
 	"fmt"
@@ -6,10 +6,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/seancfoley/ipaddress-go/ipaddr"
-	"github.com/seancfoley/ipaddress-go/ipaddr/addrstrparam"
-
 	"github.com/rs/zerolog/log"
+	"github.com/seancfoley/ipaddress-go/ipaddr"
+
+	"github.com/jpts/coredns-enum/internal/types"
+	"github.com/jpts/coredns-enum/internal/util"
+	"github.com/jpts/coredns-enum/pkg/dnsclient"
 )
 
 var srvServices = map[string][]string{
@@ -60,15 +62,15 @@ var srvServices = map[string][]string{
 
 var ipChan = make(chan net.IP)
 var srvChan = make(chan net.IP)
-var ptrResultChan = make(chan queryResult)
-var svcChan = make(chan svcResult)
-var svcResultChan = make(chan svcResult)
+var ptrResultChan = make(chan types.QueryResult)
+var svcChan = make(chan types.SvcResult)
+var svcResultChan = make(chan types.SvcResult)
 
-func brute(opts *cliOpts) ([]*svcResult, error) {
+func BruteScan(opts *types.CliOpts, dclient *dnsclient.DNSClient) ([]*types.SvcResult, error) {
 	var subnets []*ipaddr.IPAddress
 
-	if opts.cidrRange == "" {
-		cert, err := getDefaultAPIServerCert()
+	if opts.CidrRange == "" {
+		cert, err := GetDefaultAPIServerCert(dclient.CliOpts.Zone)
 		if err != nil {
 			return nil, err
 		}
@@ -79,29 +81,13 @@ func brute(opts *cliOpts) ([]*svcResult, error) {
 
 		log.Info().Msgf("Guessed %s CIDRs from APIserver cert", subnets)
 	} else {
-		for _, cidr := range strings.Split(opts.cidrRange, ",") {
-			pb := addrstrparam.IPAddressStringParamsBuilder{}
-			pb.AllowWildcardedSeparator(true)
-			pb.AllowIPv4(true)
-			pb.AllowIPv6(false)
-			pb.AllowMask(true)
-			pb.AllowPrefix(true)
-			pb.AllowEmpty(false)
-			pb.AllowSingleSegment(false)
-			params := pb.ToParams()
-
-			ipastr := ipaddr.NewIPAddressStringParams(cidr, params)
-
-			if !ipastr.IsPrefixed() {
-				return nil, fmt.Errorf("CIDR %s requires prefix, use /32 for a single host", cidr)
-			}
-
-			subnet, err := ipastr.ToAddress()
+		for _, cidr := range strings.Split(opts.CidrRange, ",") {
+			subnet, err := util.ParseIPv4CIDR(cidr)
 			if err != nil {
 				return nil, err
 			}
 
-			subnets = append(subnets, subnet.ToPrefixBlock())
+			subnets = append(subnets, subnet)
 		}
 	}
 
@@ -118,11 +104,11 @@ func brute(opts *cliOpts) ([]*svcResult, error) {
 		close(ipChan)
 	}()
 
-	// parallelise ptr query scanning
+	// parallelise ptr dnsclient.Query scanning
 	wg := sync.WaitGroup{}
-	wg.Add(opts.maxWorkers)
-	for w := 0; w < opts.maxWorkers; w++ {
-		go ptrQueryWorker(&wg)
+	wg.Add(opts.MaxWorkers)
+	for w := 0; w < opts.MaxWorkers; w++ {
+		go ptrQueryWorker(&wg, dclient)
 	}
 
 	go func() {
@@ -133,15 +119,15 @@ func brute(opts *cliOpts) ([]*svcResult, error) {
 	// recv results async
 	go func() {
 		for res := range ptrResultChan {
-			if res.answers != nil {
-				ans := res.answers[0]
+			if res.Answers != nil {
+				ans := res.Answers[0]
 				parts := strings.Split(ans.String(), "\t")
-				name, ns := parseDNSPodName(parts[len(parts)-1])
-				log.Debug().Msgf("Processing svc: %s\t%s", res.ip, parts[len(parts)-1])
-				svc := svcResult{
+				name, ns := dnsclient.ParseDNSPodName(parts[len(parts)-1])
+				log.Debug().Msgf("Processing svc: %s\t%s", res.IP, parts[len(parts)-1])
+				svc := types.SvcResult{
 					Name:      name,
 					Namespace: ns,
-					IP:        res.ip,
+					IP:        res.IP,
 				}
 				svcChan <- svc
 			}
@@ -151,9 +137,9 @@ func brute(opts *cliOpts) ([]*svcResult, error) {
 
 	// parallelise service port bruteforcing
 	wg2 := sync.WaitGroup{}
-	wg2.Add(opts.maxWorkers)
-	for w := 0; w < opts.maxWorkers; w++ {
-		go svcPortScanWorker(&wg2)
+	wg2.Add(opts.MaxWorkers)
+	for w := 0; w < opts.MaxWorkers; w++ {
+		go svcPortScanWorker(&wg2, dclient)
 	}
 
 	go func() {
@@ -161,10 +147,10 @@ func brute(opts *cliOpts) ([]*svcResult, error) {
 		close(svcResultChan)
 	}()
 
-	var svcs []*svcResult
+	var svcs []*types.SvcResult
 	for res := range svcResultChan {
 		// new object needed as objects are clobbered in channel range
-		obj := &svcResult{
+		obj := &types.SvcResult{
 			Name:      res.Name,
 			Namespace: res.Namespace,
 			IP:        res.IP,
@@ -177,9 +163,9 @@ func brute(opts *cliOpts) ([]*svcResult, error) {
 	return svcs, nil
 }
 
-func ptrQueryWorker(wg *sync.WaitGroup) {
+func ptrQueryWorker(wg *sync.WaitGroup, dclient *dnsclient.DNSClient) {
 	for ip := range ipChan {
-		res, err := queryPTR(ip)
+		res, err := dclient.QueryPTR(ip)
 		if err != nil {
 			log.Info().Msgf("Retrying failed ip %s: %s", ip, err.Error())
 			ipChan <- ip
@@ -192,16 +178,16 @@ func ptrQueryWorker(wg *sync.WaitGroup) {
 	wg.Done()
 }
 
-func svcPortScanWorker(wg *sync.WaitGroup) {
+func svcPortScanWorker(wg *sync.WaitGroup, dclient *dnsclient.DNSClient) {
 	for svc := range svcChan {
 		for proto, srvSvcList := range srvServices {
 			for _, svcName := range srvSvcList {
-				res, err := querySRV(fmt.Sprintf("%s._%s.%s.%s.svc.%s",
+				res, err := dclient.QuerySRV(fmt.Sprintf("%s._%s.%s.%s.svc.%s",
 					svcName,
 					proto,
 					svc.Name,
 					svc.Namespace,
-					opts.zone,
+					dclient.CliOpts.Zone,
 				))
 				if err != nil {
 					log.Warn().Msgf("SRV request failed %s/%s: %s", svcName, proto, err.Error())
@@ -210,8 +196,8 @@ func svcPortScanWorker(wg *sync.WaitGroup) {
 				if res == nil {
 					continue
 				}
-				for _, ans := range res.answers {
-					_, _, port, err := parseSRVAnswer(ans.String())
+				for _, ans := range res.Answers {
+					_, _, port, err := dnsclient.ParseSRVAnswer(ans.String())
 					if err != nil {
 						log.Warn().Err(err)
 						continue
@@ -226,21 +212,4 @@ func svcPortScanWorker(wg *sync.WaitGroup) {
 	}
 
 	wg.Done()
-}
-
-func reverse(numbers []string) []string {
-	newNumbers := make([]string, len(numbers))
-	for i, j := 0, len(numbers)-1; i <= j; i, j = i+1, j-1 {
-		newNumbers[i], newNumbers[j] = numbers[j], numbers[i]
-	}
-	return newNumbers
-}
-
-func isElement(s []string, str string) bool {
-	for _, v := range s {
-		if v == str {
-			return true
-		}
-	}
-	return false
 }

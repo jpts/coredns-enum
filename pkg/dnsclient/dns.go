@@ -1,4 +1,4 @@
-package cmd
+package dnsclient
 
 import (
 	"errors"
@@ -10,29 +10,48 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/rs/zerolog/log"
+
+	"github.com/jpts/coredns-enum/internal/types"
+	"github.com/jpts/coredns-enum/internal/util"
 )
 
-var clientUDP = &dns.Client{Net: "udp"}
-var clientTCP = &dns.Client{Net: "tcp"}
+type DNSClient struct {
+	UDPClient *dns.Client
+	TCPClient *dns.Client
+	CliOpts   *types.CliOpts
+}
 
-func initDNS() {
-	dur, _ := time.ParseDuration(fmt.Sprintf("%fs", opts.timeout))
+func InitDNS(opts *types.CliOpts) *DNSClient {
+	dur, _ := time.ParseDuration(fmt.Sprintf("%fs", opts.Timeout))
 	if dur < time.Microsecond {
 		dur = time.Microsecond
 	}
 	log.Debug().Msgf("timeout configured: %s", dur)
-	clientUDP.Timeout = dur
-	clientTCP.Timeout = dur
+
+	clientUDP := &dns.Client{
+		Net:     "udp",
+		Timeout: dur,
+	}
+	clientTCP := &dns.Client{
+		Net:     "tcp",
+		Timeout: dur,
+	}
+
+	return &DNSClient{
+		UDPClient: clientUDP,
+		TCPClient: clientTCP,
+		CliOpts:   opts,
+	}
 }
 
-func getNSFromSystem() (string, int, error) {
+func (d *DNSClient) GetNSFromSystem() (string, int, error) {
 	conf, err := dns.ClientConfigFromFile("/etc/resolv.conf")
 	if err != nil {
 		return "", 0, fmt.Errorf("Error making client from resolv.conf: %w", err)
 	}
 
-	if !isElement(conf.Search, fmt.Sprintf("svc.%s", opts.zone)) {
-		log.Warn().Msgf("Unabled to validate k8s zone (%s)", opts.zone)
+	if !util.IsElement(conf.Search, fmt.Sprintf("svc.%s", d.CliOpts.Zone)) {
+		log.Warn().Msgf("Unabled to validate k8s zone (%s)", d.CliOpts.Zone)
 	}
 
 	port, err := strconv.Atoi(conf.Port)
@@ -43,7 +62,7 @@ func getNSFromSystem() (string, int, error) {
 	return conf.Servers[0], port, nil
 }
 
-func queryPTR(ip net.IP) (*queryResult, error) {
+func (d *DNSClient) QueryPTR(ip net.IP) (*types.QueryResult, error) {
 
 	m := &dns.Msg{
 		Question: make([]dns.Question, 1),
@@ -52,7 +71,7 @@ func queryPTR(ip net.IP) (*queryResult, error) {
 		},
 	}
 
-	revip := strings.Join(reverse(strings.Split(ip.String(), ".")), ".")
+	revip := strings.Join(util.Reverse(strings.Split(ip.String(), ".")), ".")
 	ptr := fmt.Sprintf("%s.in-addr.arpa.", revip)
 	fqdn := dns.Fqdn(ptr)
 
@@ -62,7 +81,7 @@ func queryPTR(ip net.IP) (*queryResult, error) {
 		Qtype:  dns.TypePTR,
 		Qclass: dns.ClassINET,
 	}
-	res, err := multiProtoQueryRecord(m)
+	res, err := d.MultiProtoQueryRecord(m)
 	if err != nil {
 		return nil, err
 	}
@@ -70,16 +89,16 @@ func queryPTR(ip net.IP) (*queryResult, error) {
 		return nil, nil
 	}
 
-	return &queryResult{
-		answers:    res.answers,
-		additional: res.additional,
-		raw:        res.raw,
-		ip:         &ip,
-		rtt:        res.rtt,
+	return &types.QueryResult{
+		Answers:    res.Answers,
+		Additional: res.Additional,
+		Raw:        res.Raw,
+		IP:         &ip,
+		RTT:        res.RTT,
 	}, nil
 }
 
-func queryA(aname string) (*queryResult, error) {
+func (d *DNSClient) QueryA(aname string) (*types.QueryResult, error) {
 	m := &dns.Msg{
 		Question: make([]dns.Question, 1),
 		MsgHdr: dns.MsgHdr{
@@ -93,10 +112,10 @@ func queryA(aname string) (*queryResult, error) {
 		Qtype:  dns.TypeA,
 		Qclass: dns.ClassINET,
 	}
-	return multiProtoQueryRecord(m)
+	return d.MultiProtoQueryRecord(m)
 }
 
-func querySRV(aname string) (*queryResult, error) {
+func (d *DNSClient) QuerySRV(aname string) (*types.QueryResult, error) {
 	m := &dns.Msg{
 		Question: make([]dns.Question, 1),
 		MsgHdr: dns.MsgHdr{
@@ -110,10 +129,10 @@ func querySRV(aname string) (*queryResult, error) {
 		Qtype:  dns.TypeSRV,
 		Qclass: dns.ClassINET,
 	}
-	return multiProtoQueryRecord(m)
+	return d.MultiProtoQueryRecord(m)
 }
 
-func queryTXT(txt string) (*queryResult, error) {
+func (d *DNSClient) QueryTXT(txt string) (*types.QueryResult, error) {
 	m := &dns.Msg{
 		Question: make([]dns.Question, 1),
 		MsgHdr: dns.MsgHdr{
@@ -127,24 +146,24 @@ func queryTXT(txt string) (*queryResult, error) {
 		Qtype:  dns.TypeTXT,
 		Qclass: dns.ClassINET,
 	}
-	return multiProtoQueryRecord(m)
+	return d.MultiProtoQueryRecord(m)
 }
 
-func multiProtoQueryRecord(m *dns.Msg) (*queryResult, error) {
-	switch opts.proto {
+func (d *DNSClient) MultiProtoQueryRecord(m *dns.Msg) (*types.QueryResult, error) {
+	switch d.CliOpts.Proto {
 	case "auto":
-		return autoProtoQueryRecord(m)
+		return d.AutoProtoQueryRecord(m)
 	case "udp":
-		return queryRecord(clientUDP, m)
+		return d.queryRecord(d.UDPClient, m)
 	case "tcp":
-		return queryRecord(clientTCP, m)
+		return d.queryRecord(d.TCPClient, m)
 	default:
-		return nil, fmt.Errorf("Unknown protocol %s", opts.proto)
+		return nil, fmt.Errorf("Unknown protocol %s", d.CliOpts.Proto)
 	}
 }
 
-func autoProtoQueryRecord(m *dns.Msg) (*queryResult, error) {
-	res, err := queryRecord(clientUDP, m)
+func (d *DNSClient) AutoProtoQueryRecord(m *dns.Msg) (*types.QueryResult, error) {
+	res, err := d.queryRecord(d.UDPClient, m)
 	if err != nil {
 		return nil, err
 	}
@@ -153,17 +172,17 @@ func autoProtoQueryRecord(m *dns.Msg) (*queryResult, error) {
 		return nil, nil
 	}
 
-	if !res.raw.Truncated {
+	if !res.Raw.Truncated {
 		return res, nil
 	}
 
 	log.Debug().Msgf("Got truncated response for %s, retrying with TCP", m.Question[0].Name)
 
-	return queryRecord(clientTCP, m)
+	return d.queryRecord(d.TCPClient, m)
 }
 
-func queryRecord(client *dns.Client, m *dns.Msg) (*queryResult, error) {
-	r, rtt, err := client.Exchange(m, fmt.Sprintf("%s:%d", opts.nameserver, opts.nameport))
+func (d *DNSClient) queryRecord(client *dns.Client, m *dns.Msg) (*types.QueryResult, error) {
+	r, rtt, err := client.Exchange(m, fmt.Sprintf("%s:%d", d.CliOpts.Nameserver, d.CliOpts.Nameport))
 	if err != nil {
 		var dnsError *net.OpError
 		if errors.As(err, &dnsError) && strings.Contains(err.Error(), "timeout") {
@@ -173,17 +192,17 @@ func queryRecord(client *dns.Client, m *dns.Msg) (*queryResult, error) {
 	}
 
 	if r != nil && len(r.Answer) > 0 {
-		return &queryResult{
-			answers:    r.Answer,
-			additional: r.Extra,
-			raw:        r,
-			rtt:        &rtt,
+		return &types.QueryResult{
+			Answers:    r.Answer,
+			Additional: r.Extra,
+			Raw:        r,
+			RTT:        &rtt,
 		}, nil
 	}
 	return nil, nil
 }
 
-func parseSRVAnswer(ans string) (string, string, int, error) {
+func ParseSRVAnswer(ans string) (string, string, int, error) {
 	parts := strings.Split(ans, "\t")
 	if len(parts) != 5 {
 		return "", "", 0, fmt.Errorf("Error parsing SRV: %s", ans)
@@ -196,16 +215,16 @@ func parseSRVAnswer(ans string) (string, string, int, error) {
 	if err != nil {
 		return "", "", 0, err
 	}
-	name, ns := parseDNSPodName(parts4[3])
+	name, ns := ParseDNSPodName(parts4[3])
 	return name, ns, port, nil
 }
 
-func parseAAnswer(ans string) (string, string, net.IP, error) {
+func ParseAAnswer(ans string) (string, string, net.IP, error) {
 	parts := strings.Split(ans, "\t")
 	if len(parts) != 5 {
 		return "", "", nil, fmt.Errorf("Error parsing A: %s", ans)
 	}
-	name, ns := parseDNSPodName(parts[0])
+	name, ns := ParseDNSPodName(parts[0])
 	ip := net.ParseIP(parts[4])
 	if ip == nil {
 		return "", "", nil, fmt.Errorf("Error parsing IP address: %s", parts[4])
@@ -213,7 +232,7 @@ func parseAAnswer(ans string) (string, string, net.IP, error) {
 	return name, ns, ip, nil
 }
 
-func parseDNSPodName(fqdn string) (string, string) {
+func ParseDNSPodName(fqdn string) (string, string) {
 	parts := strings.Split(fqdn, ".")
 
 	if len(parts) == 7 {

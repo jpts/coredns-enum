@@ -1,4 +1,4 @@
-package cmd
+package scanners
 
 import (
 	"crypto/tls"
@@ -9,67 +9,11 @@ import (
 	"github.com/seancfoley/ipaddress-go/ipaddr"
 )
 
-const (
-	MODE_AUTO       = "auto"
-	MODE_BRUTEFORCE = "bruteforce"
-	MODE_WILDCARD   = "wildcard"
-	MODE_FAILED     = "failed"
-)
-
-func detectMode() string {
-	if ok, _ := checkSpecVersion(); !ok {
-		log.Info().Msg("Unable to detect spec compliant Kubernetes DNS server")
-		return MODE_FAILED
-	}
-
-	if ok, _ := wildcardK8sAddress(); ok {
-		log.Info().Msg("Wildcard support detected")
-		return MODE_WILDCARD
-	}
-	if ok, _ := queryDefaultK8sAddress(); ok {
-		log.Info().Msg("Falling back to bruteforce mode")
-		return MODE_BRUTEFORCE
-	}
-	log.Error().Msg("Failed to detect a CoreDNS server")
-	return MODE_FAILED
-}
-
-func checkSpecVersion() (bool, error) {
-	res, err := queryTXT(fmt.Sprintf("dns-version.%s", opts.zone))
-	if err != nil {
-		return false, err
-	}
-
-	return res != nil, nil
-}
-
-func queryDefaultK8sAddress() (bool, error) {
-	res, err := queryA(fmt.Sprintf("kubernetes.default.svc.%s", opts.zone))
-	if err != nil {
-		return false, err
-	}
-
-	return res != nil, nil
-}
-
-func wildcardK8sAddress() (bool, error) {
-	res, err := queryA(fmt.Sprintf("any.any.svc.%s", opts.zone))
-	if err != nil {
-		return false, err
-	}
-
-	return res != nil, nil
-}
-
-func getDefaultAPIServerCert() (*x509.Certificate, error) {
-	if ok, err := queryDefaultK8sAddress(); !ok || err != nil {
-		return nil, fmt.Errorf("couldnt query default apiserver")
-	}
-
+func GetDefaultAPIServerCert(zone string) (*x509.Certificate, error) {
 	conf := &tls.Config{
 		InsecureSkipVerify: true,
 	}
-	conn, err := tls.Dial("tcp", fmt.Sprintf("kubernetes.default.svc.%s:443", opts.zone), conf)
+	conn, err := tls.Dial("tcp", fmt.Sprintf("kubernetes.default.svc.%s:443", zone), conf)
 	if err != nil {
 		return nil, fmt.Errorf("Error in connecting to API server")
 	}
