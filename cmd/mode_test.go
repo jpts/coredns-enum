@@ -13,21 +13,27 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seancfoley/ipaddress-go/ipaddr"
 	"github.com/stretchr/testify/assert"
 )
 
-func getnets(nets []string) []*net.IPNet {
-	ipnets := []*net.IPNet{}
+func getnets(nets []string) []*ipaddr.IPAddress {
+	ipnets := []*ipaddr.IPAddress{}
 
 	for _, netw := range nets {
 		ip := strings.Split(netw, "/")[0]
 		mask := strings.Split(netw, "/")[1]
 		maskint, _ := strconv.Atoi(mask)
-		ipnet := net.IPNet{
-			IP:   net.ParseIP(ip).To4(),
-			Mask: net.CIDRMask(maskint, 32),
+
+		ipanet, err := ipaddr.NewIPAddressString(ip).ToAddress()
+		if err != nil {
+			return nil
 		}
-		ipnets = append(ipnets, &ipnet)
+		// ipanet = ipanet.SetPrefixLen(maskint)
+		// Ideally we'd set isMult directly
+		ipanet = ipanet.ToPrefixBlockLen(maskint)
+
+		ipnets = append(ipnets, ipanet)
 	}
 	return ipnets
 }
@@ -115,6 +121,6 @@ func TestGetApiServerCIDRS(t *testing.T) {
 		}
 
 		assert.Equal(t, ipnetsout, actual)
-		assert.Equal(t, nil, err)
+		assert.Nil(t, err)
 	}
 }

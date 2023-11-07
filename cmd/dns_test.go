@@ -36,7 +36,7 @@ func TestParseAAnswer(t *testing.T) {
 		assert.Equal(t, out["name"], name)
 		assert.Equal(t, out["ns"], ns)
 		assert.Equal(t, out["ip"], ip)
-		assert.Equal(t, nil, err)
+		assert.Nil(t, err)
 	}
 }
 
@@ -69,6 +69,6 @@ func TestParseSRVAnswer(t *testing.T) {
 		assert.Equal(t, out["name"], name)
 		assert.Equal(t, out["ns"], ns)
 		assert.Equal(t, out["port"], port)
-		assert.Equal(t, nil, err)
+		assert.Nil(t, err)
 	}
 }

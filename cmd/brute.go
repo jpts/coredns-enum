@@ -6,7 +6,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/apparentlymart/go-cidr/cidr"
+	"github.com/seancfoley/ipaddress-go/ipaddr"
+	"github.com/seancfoley/ipaddress-go/ipaddr/addrstrparam"
 
 	"github.com/rs/zerolog/log"
 )
@@ -64,7 +65,7 @@ var svcChan = make(chan svcResult)
 var svcResultChan = make(chan svcResult)
 
 func brute(opts *cliOpts) ([]*svcResult, error) {
-	var subnets []*net.IPNet
+	var subnets []*ipaddr.IPAddress
 
 	if opts.cidrRange == "" {
 		cert, err := getDefaultAPIServerCert()
@@ -75,25 +76,43 @@ func brute(opts *cliOpts) ([]*svcResult, error) {
 		if err != nil {
 			return nil, err
 		}
+
 		log.Info().Msgf("Guessed %s CIDRs from APIserver cert", subnets)
 	} else {
 		for _, cidr := range strings.Split(opts.cidrRange, ",") {
-			_, subnet, err := net.ParseCIDR(cidr)
+			pb := addrstrparam.IPAddressStringParamsBuilder{}
+			pb.AllowWildcardedSeparator(true)
+			pb.AllowIPv4(true)
+			pb.AllowIPv6(false)
+			pb.AllowMask(true)
+			pb.AllowPrefix(true)
+			pb.AllowEmpty(false)
+			pb.AllowSingleSegment(false)
+			params := pb.ToParams()
+
+			ipastr := ipaddr.NewIPAddressStringParams(cidr, params)
+
+			if !ipastr.IsPrefixed() {
+				return nil, fmt.Errorf("CIDR %s requires prefix, use /32 for a single host", cidr)
+			}
+
+			subnet, err := ipastr.ToAddress()
 			if err != nil {
 				return nil, err
 			}
-			subnets = append(subnets, subnet)
+
+			subnets = append(subnets, subnet.ToPrefixBlock())
 		}
 	}
 
 	// setup scan list
 	go func() {
 		for _, net := range subnets {
-			first, last := cidr.AddressRange(net)
-			count := cidr.AddressCount(net)
-			log.Info().Msgf("Scanning range %s to %s, %d hosts", first.String(), last.String(), count)
-			for ip := first; !ip.Equal(last); ip = cidr.Inc(ip) {
-				ipChan <- ip
+			iprange := net.ToSequentialRange()
+
+			log.Info().Msgf("Scanning range %s to %s, %d hosts", iprange.GetLower(), iprange.GetUpper(), iprange.GetCount())
+			for ip := iprange.Iterator(); ip.HasNext(); {
+				ipChan <- ip.Next().GetNetIP()
 			}
 		}
 		close(ipChan)

@@ -3,7 +3,6 @@ module github.com/jpts/coredns-enum
 go 1.18
 
 require (
-	github.com/apparentlymart/go-cidr v1.1.0
 	github.com/miekg/dns v1.1.53
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/rs/zerolog v1.29.0

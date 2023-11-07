@@ -4,7 +4,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"net"
 
 	"github.com/rs/zerolog/log"
 	"github.com/seancfoley/ipaddress-go/ipaddr"
@@ -88,7 +87,7 @@ func getDefaultAPIServerCert() (*x509.Certificate, error) {
 	return cert, nil
 }
 
-func isPrivateAddress(netip *net.IPNet) bool {
+func isPrivateAddress(addr *ipaddr.IPAddress) bool {
 	// RFC6598 CGN Shared IP Range
 	SHARED_CIDR_RANGES := []*ipaddr.IPAddressString{
 		ipaddr.NewIPAddressString("100.64.0.0/10"),
@@ -100,8 +99,6 @@ func isPrivateAddress(netip *net.IPNet) bool {
 		ipaddr.NewIPAddressString("198.51.100.0/24"),
 		ipaddr.NewIPAddressString("203.0.113.0/24"),
 	}
-
-	addr, _ := ipaddr.NewIPAddressFromNetIP(netip.IP)
 
 	if addr.ToIPv4().IsPrivate() {
 		return true
@@ -117,14 +114,15 @@ func isPrivateAddress(netip *net.IPNet) bool {
 	return false
 }
 
-func GetAPIServerCIDRS(cert *x509.Certificate) ([]*net.IPNet, error) {
-	var cidrs []*net.IPNet
+func GetAPIServerCIDRS(cert *x509.Certificate) ([]*ipaddr.IPAddress, error) {
+	var cidrs []*ipaddr.IPAddress
 	for _, ip := range cert.IPAddresses {
-		// Guess subnet size
-		_, net, err := net.ParseCIDR(fmt.Sprintf("%s/22", ip.String()))
+		net, err := ipaddr.NewIPAddressFromNetIP(ip)
 		if err != nil {
 			return nil, fmt.Errorf("problem parsing apiserver cert IPs: %s", ip)
 		}
+		// Guess subnet size and set network addr
+		net = net.ToPrefixBlockLen(22)
 
 		if !isPrivateAddress(net) {
 			log.Debug().Msgf("CIDR %s not private, removing from guesses", net)
