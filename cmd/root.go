@@ -9,10 +9,10 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 
-	"github.com/jpts/coredns-enum/internal/types"
-	"github.com/jpts/coredns-enum/internal/util"
 	"github.com/jpts/coredns-enum/pkg/dnsclient"
 	"github.com/jpts/coredns-enum/pkg/scanners"
+	"github.com/jpts/coredns-enum/pkg/types"
+	"github.com/jpts/coredns-enum/pkg/util"
 )
 
 var opts types.CliOpts

@@ -5,7 +5,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/jpts/coredns-enum/internal/types"
+	"github.com/jpts/coredns-enum/pkg/types"
 	"github.com/olekukonko/tablewriter"
 )
 

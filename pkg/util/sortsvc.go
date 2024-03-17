@@ -1,6 +1,6 @@
 package util
 
-import "github.com/jpts/coredns-enum/internal/types"
+import "github.com/jpts/coredns-enum/pkg/types"
 
 type SortByNsName []*types.SvcResult
 

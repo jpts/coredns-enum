@@ -11,8 +11,8 @@ import (
 	"github.com/miekg/dns"
 	"github.com/rs/zerolog/log"
 
-	"github.com/jpts/coredns-enum/internal/types"
-	"github.com/jpts/coredns-enum/internal/util"
+	"github.com/jpts/coredns-enum/pkg/types"
+	"github.com/jpts/coredns-enum/pkg/util"
 )
 
 type DNSClient struct {

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jpts/coredns-enum/internal/types"
 	"github.com/jpts/coredns-enum/pkg/dnsclient"
+	"github.com/jpts/coredns-enum/pkg/types"
 	"github.com/rs/zerolog/log"
 )
 
