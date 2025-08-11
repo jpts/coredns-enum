@@ -9,7 +9,7 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// https://github.com/coredns/corednsclient.io/blob/1.8.4/content/plugins/kubernetes.md#wildcards
+// https://github.com/coredns/coredns.io/blob/1.8.4/content/plugins/kubernetes.md#wildcards
 
 func WildcardScan(opts *types.CliOpts, dclient *dnsclient.DNSClient) ([]*types.SvcResult, error) {
 	var svcs []*types.SvcResult
